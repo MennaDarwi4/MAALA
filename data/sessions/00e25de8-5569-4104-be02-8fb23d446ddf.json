@@ -1,0 +1,13 @@
+{
+    "session_id": "00e25de8-5569-4104-be02-8fb23d446ddf",
+    "name": "New Session",
+    "agent_type": "\ud83d\udcc4 PDF Agent",
+    "created_at": "2025-12-05T17:50:03.101345",
+    "updated_at": "2025-12-05T17:50:03.101345",
+    "messages": [
+        {
+            "role": "assistant",
+            "content": "Hi! How can I help you today?"
+        }
+    ]
+}
