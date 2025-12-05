@@ -11,11 +11,11 @@ class SessionManager:
     def _get_session_path(self, session_id):
         return os.path.join(self.storage_dir, f"{session_id}.json")
 
-    def save_session(self, session_id, messages, session_name=None):
+    def save_session(self, session_id, messages, session_name=None, agent_type=None):
         """Saves the session messages and metadata to a JSON file."""
         path = self._get_session_path(session_id)
         
-        # Load existing data to preserve name if not provided
+        # Load existing data to preserve name/type if not provided
         existing_data = {}
         if os.path.exists(path):
             with open(path, "r") as f:
@@ -24,6 +24,7 @@ class SessionManager:
         data = {
             "session_id": session_id,
             "name": session_name or existing_data.get("name", "New Session"),
+            "agent_type": agent_type or existing_data.get("agent_type", "General"),
             "created_at": existing_data.get("created_at", datetime.now().isoformat()),
             "updated_at": datetime.now().isoformat(),
             "messages": messages
@@ -40,8 +41,8 @@ class SessionManager:
                 return json.load(f)
         return None
 
-    def list_sessions(self):
-        """Lists all available sessions sorted by updated_at desc."""
+    def list_sessions(self, agent_type=None):
+        """Lists all available sessions sorted by updated_at desc, optionally filtered by agent_type."""
         sessions = []
         if not os.path.exists(self.storage_dir):
             return []
@@ -52,9 +53,15 @@ class SessionManager:
                 try:
                     with open(path, "r") as f:
                         data = json.load(f)
+                        
+                        # Filter by agent_type if provided
+                        if agent_type and data.get("agent_type") != agent_type:
+                            continue
+                            
                         sessions.append({
                             "id": data.get("session_id", filename.replace(".json", "")),
                             "name": data.get("name", "Untitled Session"),
+                            "agent_type": data.get("agent_type", "General"),
                             "updated_at": data.get("updated_at", "")
                         })
                 except:

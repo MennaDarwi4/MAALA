@@ -1,0 +1,32 @@
+{
+    "session_id": "b61bf311-5589-45f3-b2ce-207078024ebe",
+    "name": "who is messi?",
+    "agent_type": "\ud83d\udd0d Search Agent",
+    "created_at": "2025-12-05T18:07:12.522037",
+    "updated_at": "2025-12-05T18:22:14.122407",
+    "messages": [
+        {
+            "role": "assistant",
+            "content": "Hi! How can I help you today?"
+        },
+        {
+            "role": "user",
+            "content": "who is messi?"
+        },
+        {
+            "role": "assistant",
+            "content": "Lionel Messi is a professional footballer who plays as a forward for Paris Saint-Germain and the Argentina national team. He is widely regarded as one of the greatest footballers of all time, known for his exceptional dribbling skills, speed, and goal-scoring ability. Messi has won numerous awards and accolades throughout his career, including six Ballon d'Or awards, ten La Liga titles, and four UEFA Champions League titles.",
+            "sources": [],
+            "history": [
+                [
+                    "system",
+                    "You are a helpful assistant with access to the following tools:\n\nSearch: Useful for searching the internet for current events and general information.\nWikipedia: Useful for finding detailed information about historical figures, concepts, and places.\nArxiv: Useful for searching scientific papers and academic research.\n\nTo use a tool, please use the following format:\nThought: Do I need to use a tool? Yes\nAction: [The name of the tool to use, e.g. Search]\nAction Input: [The input to the tool]\nObservation: [The result of the tool]\n\nWhen you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:\nThought: Do I need to use a tool? No\nFinal Answer: [your response here]\n\nBegin!\n"
+                ],
+                [
+                    "human",
+                    "who is messi?"
+                ]
+            ]
+        }
+    ]
+}
