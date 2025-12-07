@@ -1,214 +1,173 @@
 import os
-import json
-import shutil
-from groq import Groq
-from langchain_community.vectorstores import Chroma
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_groq import ChatGroq
-from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.chains.history_aware_retriever import create_history_aware_retriever
-from langchain.chains.retrieval import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage, AIMessage
+import shutil
+
+# Try to import whisper, with fallback
+try:
+    import whisper
+    WHISPER_AVAILABLE = True
+    USING_FASTER = False
+except ImportError:
+    try:
+        from faster_whisper import WhisperModel
+        WHISPER_AVAILABLE = True
+        USING_FASTER = True
+    except ImportError:
+        WHISPER_AVAILABLE = False
+        USING_FASTER = False
 
 class AudioAgent:
-    def __init__(self, groq_api_key, persistence_base_dir="data/audio_vector_stores"):
-        self.groq_api_key = groq_api_key
-        self.client = Groq(api_key=groq_api_key)
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        self.llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-8b-instant")
-        self.persistence_base_dir = persistence_base_dir
-        self.chat_history_store = {}
-        
-        # Ensure base directory exists
-        os.makedirs(self.persistence_base_dir, exist_ok=True)
+    def __init__(self, groq_api_key):
+        self.llm = ChatGroq(groq_api_key=groq_api_key, model_name="Gemma2-9b-It", temperature=0)
+        self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        self.whisper_model = None  # Lazy loading
+        self.vector_stores = {}
+        self.chat_histories = {}
+        self.uploaded_files = {}
 
-    def _get_session_dir(self, session_id):
-        return os.path.join(self.persistence_base_dir, session_id)
-
-    def _get_metadata_path(self, session_id):
-        return os.path.join(self._get_session_dir(session_id), "metadata.json")
-
-    def get_uploaded_files(self, session_id):
-        """Returns a list of uploaded audio filenames for the session."""
-        metadata_path = self._get_metadata_path(session_id)
-        if os.path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
-                return json.load(f).get("files", [])
-        return []
-
-    def _add_file_to_metadata(self, session_id, filename):
-        """Adds a filename to the session metadata."""
-        session_dir = self._get_session_dir(session_id)
-        os.makedirs(session_dir, exist_ok=True)
+    def _load_whisper_model(self):
+        """Lazy load Whisper model"""
+        if not WHISPER_AVAILABLE:
+            raise ImportError("Whisper not installed. Please run: pip install openai-whisper")
         
-        metadata_path = self._get_metadata_path(session_id)
-        files = []
-        if os.path.exists(metadata_path):
-            with open(metadata_path, "r") as f:
-                files = json.load(f).get("files", [])
-        
-        if filename not in files:
-            files.append(filename)
-            with open(metadata_path, "w") as f:
-                json.dump({"files": files}, f)
-        
-        return len(files)
+        if self.whisper_model is None:
+            if USING_FASTER:
+                self.whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+            else:
+                self.whisper_model = whisper.load_model("base")
+        return self.whisper_model
 
     def process_audio(self, audio_path, session_id, original_filename, language_mode="Auto-Detect Language"):
-        """Processes an audio file, transcribes it, and adds it to the session's vector store."""
-        current_files = self.get_uploaded_files(session_id)
-        
-        if original_filename in current_files:
-             return -2 # Already uploaded
-             
-        if len(current_files) >= 5:
-            return -1 # Limit reached
-
-        # Transcribe
+        """Process audio file and create vector store"""
         try:
-            with open(audio_path, "rb") as file:
-                # 1. Universal Translation (Any Audio -> English Text)
-                if language_mode == "Universal Translate -> English":
-                    transcription = self.client.audio.translations.create(
-                        file=(original_filename, file.read()),
-                        model="whisper-large-v3",
-                        response_format="json",
-                        temperature=0.0 
-                    )
-                
-                # 2. Specific or Auto Transcription
+            model = self._load_whisper_model()
+            
+            # Transcribe based on available whisper version
+            if USING_FASTER:
+                # faster-whisper API
+                if language_mode == "Auto-Detect Language":
+                    segments, info = model.transcribe(audio_path)
+                elif language_mode == "English":
+                    segments, info = model.transcribe(audio_path, language="en")
+                elif language_mode == "Arabic":
+                    segments, info = model.transcribe(audio_path, language="ar")
                 else:
-                    # Map UI selection to ISO codes
-                    lang_map = {
-                        "Force English (Transcription)": "en",
-                        "Force Arabic (Transcription)": "ar",
-                        "Force French (Transcription)": "fr",
-                        "Force Spanish (Transcription)": "es"
-                    }
-                    selected_iso = lang_map.get(language_mode) # Returns None for "Auto-Detect"
-                    
-                    transcription = self.client.audio.transcriptions.create(
-                        file=(original_filename, file.read()),
-                        model="whisper-large-v3",
-                        response_format="json",
-                        language=selected_iso, 
-                        temperature=0.0
-                    )
-
-                text_content = transcription.text
+                    segments, info = model.transcribe(audio_path)
+                
+                transcript = " ".join([segment.text for segment in segments])
+            else:
+                # openai-whisper API
+                if language_mode == "Auto-Detect Language":
+                    result = model.transcribe(audio_path)
+                elif language_mode == "English":
+                    result = model.transcribe(audio_path, language="en")
+                elif language_mode == "Arabic":
+                    result = model.transcribe(audio_path, language="ar")
+                else:
+                    result = model.transcribe(audio_path)
+                
+                transcript = result["text"]
+            
+            # Create document
+            doc = Document(page_content=transcript, metadata={"source": original_filename})
+            
+            # Split text
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            splits = text_splitter.split_documents([doc])
+            
+            # Create vector store
+            persist_directory = f"data/audio_vector_stores/{session_id}"
+            os.makedirs(persist_directory, exist_ok=True)
+            
+            if session_id in self.vector_stores:
+                self.vector_stores[session_id].add_documents(splits)
+            else:
+                vectorstore = Chroma.from_documents(
+                    documents=splits,
+                    embedding=self.embeddings,
+                    persist_directory=persist_directory
+                )
+                self.vector_stores[session_id] = vectorstore
+            
+            # Track file
+            if session_id not in self.uploaded_files:
+                self.uploaded_files[session_id] = []
+            if original_filename not in self.uploaded_files[session_id]:
+                self.uploaded_files[session_id].append(original_filename)
+            
+            return f"✅ Audio '{original_filename}' transcribed and processed successfully!"
+        
         except Exception as e:
-            print(f"Error transcribing audio: {e}")
-            return 0
+            return f"❌ Error processing audio: {e}"
 
-        if not text_content:
-            return 0
+    def get_uploaded_files(self, session_id):
+        """Return list of uploaded audio files"""
+        return self.uploaded_files.get(session_id, [])
 
-        # Create Document
-        doc = Document(
-            page_content=text_content,
-            metadata={"source": original_filename}
-        )
+    def format_docs(self, docs):
+        """Format documents for context"""
+        return "\n\n".join(doc.page_content for doc in docs)
+
+    def get_response(self, query, session_id):
+        """Get response based on audio transcript"""
+        if session_id not in self.vector_stores:
+            return "⚠️ No audio uploaded yet. Please upload an audio file first."
         
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=200)
-        splits = text_splitter.split_documents([doc])
+        try:
+            vectorstore = self.vector_stores[session_id]
+            retriever = vectorstore.as_retriever()
+            
+            if session_id not in self.chat_histories:
+                self.chat_histories[session_id] = []
+            
+            template = """Answer the question based only on the following audio transcript:
+{context}
+
+Question: {question}
+
+Answer: """
+            
+            prompt = ChatPromptTemplate.from_template(template)
+            
+            rag_chain = (
+                {"context": retriever | self.format_docs, "question": RunnablePassthrough()}
+                | prompt
+                | self.llm
+                | StrOutputParser()
+            )
+            
+            response = rag_chain.invoke(query)
+            
+            self.chat_histories[session_id].append(HumanMessage(content=query))
+            self.chat_histories[session_id].append(AIMessage(content=response))
+            
+            return response
         
-        if not splits:
-            return 0
-        
-        persist_dir = self._get_session_dir(session_id)
-        
-        vectorstore = Chroma.from_documents(
-            documents=splits, 
-            embedding=self.embeddings,
-            persist_directory=persist_dir
-        )
-        
-        self._add_file_to_metadata(session_id, original_filename)
-        return len(splits)
+        except Exception as e:
+            return f"❌ Error generating response: {e}"
 
     def clear_context(self, session_id):
-        """Clears the context for a specific session."""
-        session_dir = self._get_session_dir(session_id)
-        if os.path.exists(session_dir):
+        """Clear context for session"""
+        if session_id in self.vector_stores:
+            del self.vector_stores[session_id]
+        
+        if session_id in self.chat_histories:
+            del self.chat_histories[session_id]
+        
+        if session_id in self.uploaded_files:
+            del self.uploaded_files[session_id]
+        
+        persist_directory = f"data/audio_vector_stores/{session_id}"
+        if os.path.exists(persist_directory):
             try:
-                shutil.rmtree(session_dir)
+                shutil.rmtree(persist_directory)
             except Exception as e:
-                print(f"Error deleting session directory: {e}")
-        
-        if session_id in self.chat_history_store:
-            del self.chat_history_store[session_id]
-
-    def get_session_history(self, session_id: str) -> BaseChatMessageHistory:
-        if session_id not in self.chat_history_store:
-            self.chat_history_store[session_id] = ChatMessageHistory()
-        return self.chat_history_store[session_id]
-
-    def get_response(self, user_input, session_id):
-        persist_dir = self._get_session_dir(session_id)
-        
-        # Check if vectorstore exists for this session
-        if not os.path.exists(persist_dir) or not os.listdir(persist_dir):
-            return "Please upload an audio file first."
-            
-        vectorstore = Chroma(persist_directory=persist_dir, embedding_function=self.embeddings)
-
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
-        
-        # Contextualize question prompt
-        contextualize_q_system_prompt = (
-            "Given a chat history and the latest user question "
-            "which might reference context in the chat history, "
-            "formulate a standalone question which can be understood "
-            "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is."
-        )
-        contextualize_q_prompt = ChatPromptTemplate.from_messages([
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}")
-        ])
-        
-        history_aware_retriever = create_history_aware_retriever(
-            self.llm, retriever, contextualize_q_prompt
-        )
-
-        # Answer prompt
-        system_prompt = (
-            "You are an intelligent assistant analyzing audio transcripts. "
-            "The text provided below in the 'Context' section IS the actual content of the audio files you need to use. "
-            "Use this context to answer the user's question. "
-            "If the user asks for a summary, summarize the provided context. "
-            "If the answer is not in the context, state that you cannot find the information in the audio."
-            "\n\n"
-            "Context from Audio:\n{context}"
-        )
-        qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}")
-        ])
-
-        question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
-        rag_chain = create_retrieval_chain(
-            history_aware_retriever, question_answer_chain
-        )
-
-        conversational_rag_chain = RunnableWithMessageHistory(
-            rag_chain,
-            self.get_session_history,
-            input_messages_key="input",
-            history_messages_key="chat_history",
-            output_messages_key="answer"
-        )
-
-        response = conversational_rag_chain.invoke(
-            {"input": user_input},
-            config={"configurable": {"session_id": session_id}}
-        )
-        
-        return response['answer']
+                print(f"Warning: Could not delete directory {persist_directory}: {e}")
