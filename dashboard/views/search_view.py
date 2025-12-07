@@ -46,10 +46,10 @@ def search_view(orchestrator, session_id):
     """, unsafe_allow_html=True)
 
     # Only show welcome screen if no messages
-    if not st.session_state.messages:
+    if len(st.session_state.messages) <= 1:  # Only default message exists
         with st.container():
             st.markdown('<div class="search-container">', unsafe_allow_html=True)
-            st.markdown('<div class="search-title">Need help with your next topic?</div>', unsafe_allow_html=True)
+            st.markdown('<div class="search-title">🔍 Need help with your next topic?</div>', unsafe_allow_html=True)
             st.markdown('<div class="search-subtitle">Ask any question to explore the web, Wikipedia, and Arxiv</div>', unsafe_allow_html=True)
             
             # Suggestion Chips (Visual only for now, could be made interactive)
@@ -64,37 +64,39 @@ def search_view(orchestrator, session_id):
             
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # Chat Interface for Search
-    # We'll use the shared chat logic but styled for search
-    
     # Display chat messages
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
             
+            # Show thinking process if available
             if "history" in msg and msg["history"]:
                 with st.expander("💭 Thinking Process"):
                     for item in msg["history"]:
                         if isinstance(item, tuple):
                             role, content = item
                             if role == "ai":
-                                st.markdown(f"**AI:** {content}")
+                                st.markdown(f"**🤖 AI:** {content}")
                             elif role == "human":
-                                st.markdown(f"**Observation:** {content}")
+                                st.markdown(f"**🔍 Observation:** {content}")
                         else:
                             st.write(item)
 
+            # Show sources if available
             if "sources" in msg and msg["sources"]:
-                with st.expander("📚 Sources"):
+                with st.expander("📚 Sources Used"):
                     for source in msg["sources"]:
-                        st.write(f"- {source}")
+                        st.markdown(f"- 🔗 {source}")
 
+    # Chat input
     if prompt := st.chat_input("Search for anything...", key="search_input"):
+        # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
         
+        # Get AI response
         with st.chat_message("assistant"):
-            with st.spinner("Searching..."):
+            with st.spinner("🔎 Searching across multiple sources..."):
                 try:
                     result = orchestrator.route_query(
                         prompt, 
@@ -106,25 +108,29 @@ def search_view(orchestrator, session_id):
                     sources = result.get("sources", [])
                     history = result.get("history", [])
                     
+                    # Display response
                     st.write(response_text)
                     
+                    # Show thinking process
                     if history:
                         with st.expander("💭 Thinking Process"):
                             for item in history:
                                 if isinstance(item, tuple):
                                     role, content = item
                                     if role == "ai":
-                                        st.markdown(f"**AI:** {content}")
+                                        st.markdown(f"**🤖 AI:** {content}")
                                     elif role == "human":
-                                        st.markdown(f"**Observation:** {content}")
+                                        st.markdown(f"**🔍 Observation:** {content}")
                                 else:
                                     st.write(item)
                     
+                    # Show sources
                     if sources:
-                        with st.expander("📚 Sources"):
+                        with st.expander("📚 Sources Used"):
                             for source in sources:
-                                st.write(f"- {source}")
+                                st.markdown(f"- 🔗 {source}")
                     
+                    # Add assistant message with metadata
                     st.session_state.messages.append({
                         'role': 'assistant', 
                         "content": response_text,
@@ -132,11 +138,17 @@ def search_view(orchestrator, session_id):
                         "history": history
                     })
                     
-                    # Save session
+                    # ✅ FIX: Save session with agent_type
                     st.session_state.session_manager.save_session(
                         session_id, 
-                        st.session_state.messages
+                        st.session_state.messages,
+                        agent_type="🔍 Search Agent"  # ← الإضافة دي
                     )
                     
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    error_msg = f"❌ Error: {str(e)}"
+                    st.error(error_msg)
+                    st.session_state.messages.append({
+                        'role': 'assistant', 
+                        "content": error_msg
+                    })
