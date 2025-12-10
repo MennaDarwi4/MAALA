@@ -12,7 +12,7 @@ import shutil
 
 class PDFAgent:
     def __init__(self, groq_api_key):
-        self.llm = ChatGroq(groq_api_key=groq_api_key, model_name="Gemma2-9b-It", temperature=0)
+        self.llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.3-70b-versatile", temperature=0)
         self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         self.vector_stores = {}
         self.chat_histories = {}

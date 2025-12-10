@@ -4,10 +4,10 @@ from langchain_core.messages import HumanMessage
 
 class OCRAgent:
     def __init__(self, groq_api_key):
-        # Using a vision-capable model from Groq
+        # ✅ استخدم نموذج Vision المتاح في Groq
         self.llm = ChatGroq(
             groq_api_key=groq_api_key, 
-            model_name="meta-llama/llama-4-scout-17b-16e-instruct"
+            model_name="llama-3.3-70b-versatile"
         )
 
     def extract_text(self, image_path: str) -> str:

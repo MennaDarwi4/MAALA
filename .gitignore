@@ -1,3 +1,5 @@
 .env
 __pycache__/
 *.pyc
+data/pdf_vector_stores/
+data/sessions/

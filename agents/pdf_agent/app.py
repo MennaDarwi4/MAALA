@@ -1,7 +1,12 @@
 import streamlit as st
 import os
+import sys
 import tempfile
 from dotenv import load_dotenv
+
+# ✅ أضف المسار للـ path عشان يلاقي core.py
+sys.path.insert(0, os.path.dirname(__file__))
+
 from core import PDFAgent
 
 # Load environment variables
